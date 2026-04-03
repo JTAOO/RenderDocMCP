@@ -311,6 +311,28 @@ def open_capture(capture_path: str) -> dict:
     return bridge.call("open_capture", {"capture_path": capture_path})
 
 
+@mcp.tool
+def get_cbuffer_contents(
+    event_id: int,
+    stage: Literal["vertex", "hull", "domain", "geometry", "pixel", "compute"],
+) -> dict:
+    """
+    Get constant buffer contents for a specific stage at an event.
+
+    Args:
+        event_id: The event ID to get constant buffer values at
+        stage: The shader stage (vertex, hull, domain, geometry, pixel, compute)
+
+    Returns constant buffer data including:
+    - cbuffers: List of constant buffers with name, slot, size, and variable values
+    - Each variable includes name, byte_offset, type, and actual value
+
+    Note: This is the recommended way to read cbuffer values instead of parsing
+    get_shader_info output.
+    """
+    return bridge.call("get_cbuffer_contents", {"event_id": event_id, "stage": stage})
+
+
 def main():
     """Run the MCP server"""
     mcp.run()
