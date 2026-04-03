@@ -332,6 +332,41 @@ class PipelineService:
 
         return cbuffers
 
+    def _get_cbuffer_info(self, controller, pipe, reflection, stage):
+        """Get constant buffer information and values"""
+        cbuffers = []
+
+        for i, cb in enumerate(reflection.constantBlocks):
+            cb_info = {
+                "name": cb.name,
+                "slot": i,
+                "size": cb.byteSize,
+                "variables": [],
+            }
+
+            try:
+                # Use GetConstantBlock (correct API name)
+                bind = pipe.GetConstantBlock(stage, i, 0)
+
+                if bind and hasattr(bind, 'descriptor') and bind.descriptor.resource != rd.ResourceId.Null():
+                    variables = controller.GetCBufferVariableContents(
+                        pipe.GetGraphicsPipelineObject(),
+                        reflection.resourceId,
+                        stage,
+                        reflection.entryPoint,
+                        i,
+                        bind.descriptor.resource,
+                        0,  # byteOffset
+                        0,  # byteSize (0 = full buffer)
+                    )
+                    cb_info["variables"] = Serializers.serialize_variables(variables)
+            except Exception as e:
+                cb_info["error"] = str(e)
+
+            cbuffers.append(cb_info)
+
+        return cbuffers
+
     def _get_resource_details(self, controller, resource_id):
         """Get details about a resource (texture or buffer)"""
         details = {}
@@ -364,38 +399,63 @@ class PipelineService:
 
         return details
 
-    def _get_cbuffer_info(self, controller, pipe, reflection, stage):
-        """Get constant buffer information and values"""
-        cbuffers = []
+    def get_cbuffer_contents(self, event_id, stage):
+        """Get constant buffer contents for a specific stage at an event"""
+        if not self.ctx.IsCaptureLoaded():
+            raise ValueError("No capture loaded")
 
-        for i, cb in enumerate(reflection.constantBlocks):
-            cb_info = {
-                "name": cb.name,
-                "slot": i,
-                "size": cb.byteSize,
-                "variables": [],
-            }
+        result = {"cbuffers": [], "error": None}
 
-            try:
-                bind = pipe.GetConstantBuffer(stage, i, 0)
-                if bind.resourceId != rd.ResourceId.Null():
-                    variables = controller.GetCBufferVariableContents(
-                        pipe.GetGraphicsPipelineObject(),
-                        reflection.resourceId,
-                        stage,
-                        reflection.entryPoint,
-                        i,
-                        bind.resourceId,
-                        bind.byteOffset,
-                        bind.byteSize,
-                    )
-                    cb_info["variables"] = Serializers.serialize_variables(variables)
-            except Exception as e:
-                cb_info["error"] = str(e)
+        def callback(controller):
+            controller.SetFrameEvent(event_id, True)
 
-            cbuffers.append(cb_info)
+            pipe = controller.GetPipelineState()
+            stage_enum = Parsers.parse_stage(stage)
 
-        return cbuffers
+            reflection = pipe.GetShaderReflection(stage_enum)
+            if not reflection:
+                result["error"] = "No shader reflection available for %s stage" % stage
+                return
+
+            cbuffers = []
+            for i, cb in enumerate(reflection.constantBlocks):
+                cb_info = {
+                    "name": cb.name,
+                    "slot": i,
+                    "byte_size": cb.byteSize,
+                    "variables": [],
+                }
+
+                try:
+                    # Use GetConstantBlock (correct API name)
+                    bind = pipe.GetConstantBlock(stage_enum, i, 0)
+
+                    if bind and hasattr(bind, 'descriptor') and bind.descriptor.resource != rd.ResourceId.Null():
+                        variables = controller.GetCBufferVariableContents(
+                            pipe.GetGraphicsPipelineObject(),
+                            reflection.resourceId,
+                            stage_enum,
+                            reflection.entryPoint,
+                            i,
+                            bind.descriptor.resource,
+                            bind.descriptor.byteOffset,
+                            bind.descriptor.byteSize,
+                        )
+                        cb_info["variables"] = Serializers.serialize_variables(variables)
+                    else:
+                        cb_info["note"] = "Constant buffer not bound"
+                except Exception as e:
+                    cb_info["error"] = str(e)
+
+                cbuffers.append(cb_info)
+
+            result["cbuffers"] = cbuffers
+
+        self._invoke(callback)
+
+        if result["error"]:
+            raise ValueError(result["error"])
+        return result
 
     def _get_resource_bindings(self, reflection):
         """Get shader resource bindings"""

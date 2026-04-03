@@ -28,6 +28,7 @@ class RequestHandler:
             "get_pipeline_state": self._handle_get_pipeline_state,
             "list_captures": self._handle_list_captures,
             "open_capture": self._handle_open_capture,
+            "get_cbuffer_contents": self._handle_get_cbuffer_contents,
         }
 
     def handle(self, request):
@@ -183,3 +184,13 @@ class RequestHandler:
         if capture_path is None:
             raise ValueError("capture_path is required")
         return self.facade.open_capture(capture_path)
+
+    def _handle_get_cbuffer_contents(self, params):
+        """Handle get_cbuffer_contents request"""
+        event_id = params.get("event_id")
+        stage = params.get("stage")
+        if event_id is None:
+            raise ValueError("event_id is required")
+        if stage is None:
+            raise ValueError("stage is required")
+        return self.facade.get_cbuffer_contents(int(event_id), stage)

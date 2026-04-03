@@ -135,3 +135,7 @@ class RenderDocFacade:
     def get_pipeline_state(self, event_id):
         """Get full pipeline state at an event"""
         return self._pipeline.get_pipeline_state(event_id)
+
+    def get_cbuffer_contents(self, event_id, stage):
+        """Get constant buffer contents for a specific stage at an event"""
+        return self._pipeline.get_cbuffer_contents(event_id, stage)
