@@ -2,6 +2,7 @@
 Pipeline state service for RenderDoc.
 """
 
+import base64
 import renderdoc as rd
 
 from ..utils import Parsers, Serializers, Helpers
@@ -40,6 +41,13 @@ class PipelineService:
                 "entry_point": entry,
                 "stage": stage,
             }
+
+            # Get raw shader bytecode (DXBC/DXIL)
+            if reflection:
+                # Convert bytes to base64 string for JSON serialization
+                shader_info["raw_bytes_base64"] = base64.b64encode(reflection.rawBytes).decode('ascii')
+                shader_info["raw_bytes_size"] = len(reflection.rawBytes)
+                shader_info["encoding"] = str(reflection.encoding)  # "DXBC" or "DXIL"
 
             # Get disassembly
             try:

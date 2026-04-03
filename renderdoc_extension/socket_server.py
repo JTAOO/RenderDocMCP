@@ -102,7 +102,7 @@ class MCPBridgeServer(QObject):
 
             # Write response
             with open(RESPONSE_FILE, "w", encoding="utf-8") as f:
-                json.dump(response, f)
+                json.dump(response, f, ensure_ascii=False)
 
         except Exception as e:
             print("[MCP Bridge] Error processing request: %s" % str(e))
