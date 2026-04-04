@@ -91,6 +91,9 @@ class CaptureManager:
             dict with success status and capture info
         """
         import os
+        import time
+
+        print("[MCP Bridge] Opening capture: %s" % capture_path)
 
         # Validate file exists
         if not os.path.isfile(capture_path):
@@ -104,8 +107,9 @@ class CaptureManager:
         opts = rd.ReplayOptions()
 
         # Open the capture
-        # LoadCapture will automatically close any existing capture
+        # LoadCapture is asynchronous - it spawns a thread to load the capture
         try:
+            print("[MCP Bridge] Calling LoadCapture...")
             self.ctx.LoadCapture(
                 capture_path,   # captureFile
                 opts,           # ReplayOptions
@@ -113,12 +117,36 @@ class CaptureManager:
                 False,          # temporary (False = permanent load)
                 True,           # local (True = local file)
             )
+            print("[MCP Bridge] LoadCapture called successfully")
         except Exception as e:
-            raise ValueError("Failed to open capture: %s" % str(e))
+            print("[MCP Bridge] LoadCapture exception: %s" % str(e))
+            raise ValueError("Failed to start loading capture: %s" % str(e))
 
-        # Verify the capture was loaded
-        if not self.ctx.IsCaptureLoaded():
-            raise ValueError("Failed to load capture (unknown error)")
+        # Wait for capture to finish loading (LoadCapture is async)
+        # Poll IsCaptureLoaded() with timeout
+        timeout = 120.0  # 120 second timeout for large captures
+        start_time = time.time()
+        wait_count = 0
+
+        print("[MCP Bridge] Waiting for capture to load...")
+        while not self.ctx.IsCaptureLoaded():
+            elapsed = time.time() - start_time
+            wait_count += 1
+
+            # Log progress every 5 seconds
+            if wait_count % 50 == 0:
+                print("[MCP Bridge] Still loading... %.1f seconds elapsed" % elapsed)
+
+            if elapsed > timeout:
+                print("[MCP Bridge] Load timeout after %.1f seconds" % timeout)
+                raise ValueError("Failed to load capture: timeout after %.0f seconds" % timeout)
+
+            time.sleep(0.1)  # 100ms poll interval
+
+        print("[MCP Bridge] Capture loaded successfully in %.1f seconds" % (time.time() - start_time))
+
+        # Small delay to ensure replay is fully initialized
+        time.sleep(0.05)
 
         # Get capture info
         result = {
@@ -135,13 +163,13 @@ class CaptureManager:
                 try:
                     props = controller.GetAPIProperties()
                     api_result["api"] = str(props.pipelineType)
-                except Exception:
-                    pass
+                except Exception as e:
+                    print("[MCP Bridge] GetAPIProperties error: %s" % str(e))
 
             self._invoke(callback)
             if api_result["api"]:
                 result["api"] = api_result["api"]
-        except Exception:
-            pass
+        except Exception as e:
+            print("[MCP Bridge] API check error: %s" % str(e))
 
         return result
