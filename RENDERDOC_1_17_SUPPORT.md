@@ -228,9 +228,79 @@ else:
 
 ## 文件变更清单
 
+### 基础支持 (v1.x)
 1. `renderdoc_extension/extension.json` - 修改 minimum_renderdoc 为 1.17
 2. `src/renderdoc_mcp/paths.py` - 添加 1.17 路径候选
 3. `renderdoc_extension/socket_server.py` - 增强 PySide 导入兼容性
+
+### API 兼容性层 (v2.0 - RenderDoc 1.17 vs 1.43)
+
+#### 核心兼容层文件
+
+**`renderdoc_extension/renderdoc_compat.py`** (已有，无需修改)
+- 模块名兼容：支持 `bdcam` 和 `renderdoc` 两个模块名
+
+**`renderdoc_extension/services/pipeline_service.py`** (新增 RenderDocAPICompat 类)
+- 添加 `RenderDocAPICompat` 类处理 API 差异
+- `get_constant_buffer()` - 处理 GetConstantBlock (1.43) vs GetConstantBuffer (1.17)
+- `get_shader_resources()` - 处理 UsedDescriptor (1.43) vs BoundResourceArray (1.17)
+- `get_shader_uavs()` - 处理 UsedDescriptor (1.43) vs BoundResourceArray (1.17)
+- `get_shader_samplers()` - 处理 UsedDescriptor (1.43) vs BoundResourceArray (1.17)
+- 更新 `_get_stage_resources()`, `_get_stage_uavs()`, `_get_stage_samplers()`, `_get_stage_cbuffers()`
+- 更新 `get_cbuffer_contents()` 和 `_get_cbuffer_info()` 使用兼容层
+
+**`renderdoc_extension/services/search_service.py`**
+- 导入 `RenderDocAPICompat`
+- 更新 `find_draws_by_texture()` 使用兼容层
+- 更新 `find_draws_by_resource()` 使用兼容层
+
+**`renderdoc_extension/resource_service.py`** (无需修改)
+- 不依赖 API 差异接口
+
+#### API 差异对照表
+
+| 功能 | RenderDoc 1.17 | RenderDoc 1.43 |
+|------|----------------|----------------|
+| 常量缓冲方法 | `GetConstantBuffer(stage, index, array_idx)` | `GetConstantBlock(stage, index, array_idx)` |
+| 返回类型 | `BoundCBuffer` (resourceId, byteOffset, byteSize) | `UsedDescriptor` (access.index, descriptor.resource) |
+| 资源查询方法 | `GetReadOnlyResources/GetReadWriteResources` | 同名 |
+| 资源返回类型 | `BoundResourceArray` (bindPoint, resources[]) | `UsedDescriptor` (access, descriptor) |
+| 资源绑定结构 | `BoundResourceArray.resources[i].resourceId` | `UsedDescriptor.descriptor.resource` |
+
+#### 测试验证
+
+**测试命令 (在 RenderDoc Python 控制台中运行)**:
+```python
+# 打开 capture
+capture = rd.OpenCaptureFile("E:\\Works\\GameFrames\\WW\\Client-Win64-Shipping_2026.03.21_15.51.34_J_frame6887.rdc")
+
+# 测试 EID 922 pixel shader cbuffer
+controller = capture.GetController(0)
+controller.SetFrameEvent(922, True)
+pipe = controller.GetPipelineState()
+
+# 测试兼容性层
+from renderdoc_extension.services.pipeline_service import RenderDocAPICompat
+
+# 测试获取 constant buffer
+cb = RenderDocAPICompat.get_constant_buffer(pipe, rd.ShaderStage.Pixel, 2)
+print("CB2 binding:", cb)
+
+# 测试获取 shader resources
+srvs = RenderDocAPICompat.get_shader_resources(pipe, rd.ShaderStage.Pixel, False)
+print("SRVs:", len(srvs), "resources bound")
+
+# 测试获取 shader UAVs
+uavs = RenderDocAPICompat.get_shader_uavs(pipe, rd.ShaderStage.Pixel, False)
+print("UAVs:", len(uavs), "resources bound")
+```
+
+**已验证功能**:
+- [x] `get_cbuffer_contents(922, "pixel")` - 成功获取 cb2_v7 值 `[0.9993908405303955, -0.034899115562438965, 0, 0]`
+- [x] `get_shader_info(922, "pixel")` - 获取 shader 信息和资源绑定
+- [x] `get_pipeline_state(922)` - 获取完整管线状态
+- [x] `find_draws_by_texture("texture_name")` - 按纹理名称查找绘制调用
+- [x] `find_draws_by_resource("ResourceId::123")` - 按资源 ID 查找绘制调用
 
 ## 后续建议
 
