@@ -15,6 +15,80 @@ class PipelineService:
     def __init__(self, ctx, invoke_fn):
         self.ctx = ctx
         self._invoke = invoke_fn
+        # Detect RenderDoc version for API compatibility
+        # RenderDoc 1.17 uses GetConstantBuffer, 1.43+ uses GetConstantBlock
+        self._use_legacy_api = self._check_legacy_api()
+
+    def _check_legacy_api(self):
+        """Check if we need to use legacy API (RenderDoc 1.17)"""
+        try:
+            # Try to get version string
+            version_str = rd.RENDERDOC_GetVersionString()
+            # Parse major.minor version
+            parts = version_str.split('.')
+            if len(parts) >= 2:
+                major = int(parts[0]) if parts[0].isdigit() else 0
+                minor = int(parts[1].split()[0]) if parts[1].split()[0].isdigit() else 0
+                # Versions before 1.20 use legacy API
+                if major < 1 or (major == 1 and minor < 20):
+                    print("[PipelineService] Using legacy API for RenderDoc %s" % version_str)
+                    return True
+            print("[PipelineService] Using modern API for RenderDoc %s" % version_str)
+        except Exception as e:
+            # If we can't detect version, default to trying modern API first
+            print("[PipelineService] Could not detect version (%s), will try both APIs" % str(e))
+        return False
+
+    def _get_constant_buffer(self, pipe, stage, slot, array_idx):
+        """
+        Get constant buffer binding with API compatibility.
+
+        RenderDoc 1.17: GetConstantBuffer(stage, slot, array_idx) -> BoundCBuffer
+          - bind.resourceId, bind.byteOffset, bind.byteSize
+        RenderDoc 1.43+: GetConstantBlock(stage, slot, array_idx) -> different struct
+          - bind.descriptor.resource, bind.descriptor.byteOffset, bind.descriptor.byteSize
+
+        Returns dict with 'resourceId', 'byteOffset', 'byteSize' or None if not available.
+        """
+        result = None
+
+        # Try modern API first (1.43+) - GetConstantBlock
+        try:
+            bind = pipe.GetConstantBlock(stage, slot, array_idx)
+            if bind and hasattr(bind, 'descriptor'):
+                result = {
+                    'resourceId': bind.descriptor.resource,
+                    'byteOffset': bind.descriptor.byteOffset,
+                    'byteSize': bind.descriptor.byteSize,
+                }
+        except AttributeError:
+            # Method doesn't exist in this RenderDoc version
+            pass
+        except Exception as e:
+            # Method exists but failed - log for debugging
+            print("[PipelineService] GetConstantBlock failed: %s" % str(e))
+
+        # If modern API worked, return the result
+        if result is not None:
+            return result
+
+        # Try legacy API (1.17) - GetConstantBuffer
+        try:
+            bind = pipe.GetConstantBuffer(stage, slot, array_idx)
+            if bind:
+                result = {
+                    'resourceId': bind.resourceId,
+                    'byteOffset': bind.byteOffset,
+                    'byteSize': bind.byteSize,
+                }
+        except AttributeError:
+            # Method doesn't exist in this RenderDoc version
+            pass
+        except Exception as e:
+            # Method exists but failed - log for debugging
+            print("[PipelineService] GetConstantBuffer failed: %s" % str(e))
+
+        return result
 
     def get_shader_info(self, event_id, stage):
         """Get shader information for a specific stage"""
@@ -354,19 +428,19 @@ class PipelineService:
             }
 
             try:
-                # Use GetConstantBlock (correct API name)
-                bind = pipe.GetConstantBlock(stage, i, 0)
+                # Use compatibility layer for GetConstantBuffer/GetConstantBlock
+                bind = self._get_constant_buffer(pipe, stage, i, 0)
 
-                if bind and hasattr(bind, 'descriptor') and bind.descriptor.resource != rd.ResourceId.Null():
+                if bind and bind['resourceId'] != rd.ResourceId.Null():
                     variables = controller.GetCBufferVariableContents(
                         pipe.GetGraphicsPipelineObject(),
                         reflection.resourceId,
                         stage,
                         reflection.entryPoint,
                         i,
-                        bind.descriptor.resource,
-                        0,  # byteOffset
-                        0,  # byteSize (0 = full buffer)
+                        bind['resourceId'],
+                        bind['byteOffset'],
+                        bind['byteSize'],
                     )
                     cb_info["variables"] = Serializers.serialize_variables(variables)
             except Exception as e:
@@ -436,19 +510,19 @@ class PipelineService:
                 }
 
                 try:
-                    # Use GetConstantBlock (correct API name)
-                    bind = pipe.GetConstantBlock(stage_enum, i, 0)
+                    # Use compatibility layer for GetConstantBuffer/GetConstantBlock
+                    bind = self._get_constant_buffer(pipe, stage_enum, i, 0)
 
-                    if bind and hasattr(bind, 'descriptor') and bind.descriptor.resource != rd.ResourceId.Null():
+                    if bind and bind['resourceId'] != rd.ResourceId.Null():
                         variables = controller.GetCBufferVariableContents(
                             pipe.GetGraphicsPipelineObject(),
                             reflection.resourceId,
                             stage_enum,
                             reflection.entryPoint,
                             i,
-                            bind.descriptor.resource,
-                            bind.descriptor.byteOffset,
-                            bind.descriptor.byteSize,
+                            bind['resourceId'],
+                            bind['byteOffset'],
+                            bind['byteSize'],
                         )
                         cb_info["variables"] = Serializers.serialize_variables(variables)
                     else:
