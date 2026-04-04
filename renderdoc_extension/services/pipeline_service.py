@@ -9,6 +9,198 @@ from ..renderdoc_compat import rd
 from ..utils import Parsers, Serializers, Helpers
 
 
+class RenderDocAPICompat:
+    """
+    RenderDoc API compatibility layer for handling differences between versions.
+
+    RenderDoc 1.17 uses:
+    - GetConstantBuffer() returning BoundCBuffer (resourceId, byteOffset, byteSize, inlineData)
+    - GetReadOnlyResources/GetReadWriteResources returning List[BoundResourceArray]
+    - BoundResourceArray has bindPoint and resources[] list
+
+    RenderDoc 1.43 uses:
+    - GetConstantBlock() returning UsedDescriptor (access, descriptor, sampler)
+    - GetReadOnlyResources/GetReadWriteResources returning List[UsedDescriptor]
+    - UsedDescriptor has access.index and descriptor.resource
+    """
+
+    @staticmethod
+    def get_constant_buffer(pipe, stage, index, array_idx=0):
+        """Get constant buffer binding with API compatibility."""
+        bind = None
+        if hasattr(pipe, 'GetConstantBlock'):
+            bind = pipe.GetConstantBlock(stage, index, array_idx)
+        elif hasattr(pipe, 'GetConstantBuffer'):
+            bind = pipe.GetConstantBuffer(stage, index, array_idx)
+
+        if not bind:
+            return None
+
+        # Normalize to common format
+        result = {'resource_id': None, 'byte_offset': 0, 'byte_size': 0}
+
+        if hasattr(bind, 'descriptor') and hasattr(bind.descriptor, 'resource'):
+            # RenderDoc 1.43+ (UsedDescriptor)
+            result['resource_id'] = bind.descriptor.resource
+            result['byte_offset'] = getattr(bind.descriptor, 'byteOffset', 0)
+            result['byte_size'] = getattr(bind.descriptor, 'byteSize', 0)
+        elif hasattr(bind, 'resourceId'):
+            # RenderDoc 1.17 (BoundCBuffer)
+            result['resource_id'] = bind.resourceId
+            result['byte_offset'] = getattr(bind, 'byteOffset', 0)
+            result['byte_size'] = getattr(bind, 'byteSize', 0)
+
+        return result
+
+    @staticmethod
+    def get_shader_resources(pipe, stage, only_used=False):
+        """
+        Get shader resources with API compatibility.
+
+        Returns list of dicts with normalized keys:
+        - slot: bind slot index
+        - resource_id: the bound resource ID
+        - first_mip, num_mips, first_slice, num_slices: texture subresource info
+        """
+        resources = []
+
+        # Try GetReadOnlyResources first
+        if hasattr(pipe, 'GetReadOnlyResources'):
+            raw_resources = pipe.GetReadOnlyResources(stage, only_used)
+        else:
+            return resources
+
+        for item in raw_resources:
+            # RenderDoc 1.43+: UsedDescriptor with access and descriptor
+            if hasattr(item, 'descriptor') and hasattr(item, 'access'):
+                if item.descriptor.resource == rd.ResourceId.Null():
+                    continue
+                resources.append({
+                    'slot': getattr(item.access, 'index', 0),
+                    'resource_id': item.descriptor.resource,
+                    'first_mip': getattr(item.descriptor, 'firstMip', 0),
+                    'num_mips': getattr(item.descriptor, 'numMips', 0),
+                    'first_slice': getattr(item.descriptor, 'firstSlice', 0),
+                    'num_slices': getattr(item.descriptor, 'numSlices', 0),
+                })
+            # RenderDoc 1.17: BoundResourceArray with bindPoint and resources list
+            elif hasattr(item, 'bindPoint') and hasattr(item, 'resources'):
+                slot = getattr(item.bindPoint, 'index', 0) if hasattr(item.bindPoint, 'index') else 0
+                for res in item.resources:
+                    if hasattr(res, 'resourceId') and res.resourceId != rd.ResourceId.Null():
+                        resources.append({
+                            'slot': slot,
+                            'resource_id': res.resourceId,
+                            'first_mip': getattr(res, 'firstMip', -1),
+                            'num_mips': getattr(res, 'numMips', -1),
+                            'first_slice': getattr(res, 'firstSlice', -1),
+                            'num_slices': getattr(res, 'numSlices', -1),
+                        })
+            # Fallback: try direct descriptor access
+            elif hasattr(item, 'descriptor'):
+                if item.descriptor.resource == rd.ResourceId.Null():
+                    continue
+                resources.append({
+                    'slot': getattr(item, 'slot', 0),
+                    'resource_id': item.descriptor.resource,
+                    'first_mip': getattr(item.descriptor, 'firstMip', 0),
+                    'num_mips': getattr(item.descriptor, 'numMips', 0),
+                    'first_slice': getattr(item.descriptor, 'firstSlice', 0),
+                    'num_slices': getattr(item.descriptor, 'numSlices', 0),
+                })
+
+        return resources
+
+    @staticmethod
+    def get_shader_uavs(pipe, stage, only_used=False):
+        """
+        Get shader UAVs (read-write resources) with API compatibility.
+
+        Returns list of dicts with normalized keys:
+        - slot: bind slot index
+        - resource_id: the bound resource ID
+        - first_element, num_elements: UAV range info
+        """
+        uavs = []
+
+        if hasattr(pipe, 'GetReadWriteResources'):
+            raw_uavs = pipe.GetReadWriteResources(stage, only_used)
+        else:
+            return uavs
+
+        for item in raw_uavs:
+            # RenderDoc 1.43+: UsedDescriptor
+            if hasattr(item, 'descriptor') and hasattr(item, 'access'):
+                if item.descriptor.resource == rd.ResourceId.Null():
+                    continue
+                uavs.append({
+                    'slot': getattr(item.access, 'index', 0),
+                    'resource_id': item.descriptor.resource,
+                    'first_element': getattr(item.descriptor, 'firstMip', 0),
+                    'num_elements': getattr(item.descriptor, 'numMips', 0),
+                })
+            # RenderDoc 1.17: BoundResourceArray
+            elif hasattr(item, 'bindPoint') and hasattr(item, 'resources'):
+                slot = getattr(item.bindPoint, 'index', 0) if hasattr(item.bindPoint, 'index') else 0
+                for res in item.resources:
+                    if hasattr(res, 'resourceId') and res.resourceId != rd.ResourceId.Null():
+                        uavs.append({
+                            'slot': slot,
+                            'resource_id': res.resourceId,
+                            'first_element': getattr(res, 'firstMip', -1),
+                            'num_elements': getattr(res, 'numMips', -1),
+                        })
+            elif hasattr(item, 'descriptor'):
+                if item.descriptor.resource == rd.ResourceId.Null():
+                    continue
+                uavs.append({
+                    'slot': getattr(item, 'slot', 0),
+                    'resource_id': item.descriptor.resource,
+                    'first_element': getattr(item.descriptor, 'firstMip', 0),
+                    'num_elements': getattr(item.descriptor, 'numMips', 0),
+                })
+
+        return uavs
+
+    @staticmethod
+    def get_shader_samplers(pipe, stage):
+        """
+        Get shader samplers with API compatibility.
+
+        Returns list of dicts with normalized sampler info.
+        """
+        samplers = []
+
+        if hasattr(pipe, 'GetSamplers'):
+            raw_samplers = pipe.GetSamplers(stage)
+        else:
+            return samplers
+
+        for item in raw_samplers:
+            # RenderDoc 1.43+: UsedDescriptor
+            if hasattr(item, 'access') and hasattr(item, 'sampler'):
+                samp_info = {'slot': getattr(item.access, 'index', 0)}
+                if hasattr(item, 'sampler'):
+                    samp_info['sampler_descriptor'] = item.sampler
+                samplers.append(samp_info)
+            # RenderDoc 1.17: BoundResourceArray
+            elif hasattr(item, 'bindPoint') and hasattr(item, 'resources'):
+                slot = getattr(item.bindPoint, 'index', 0) if hasattr(item.bindPoint, 'index') else 0
+                for res in item.resources:
+                    if hasattr(res, 'resourceId') and res.resourceId != rd.ResourceId.Null():
+                        samplers.append({
+                            'slot': slot,
+                            'resource_id': res.resourceId,
+                        })
+            elif hasattr(item, 'descriptor'):
+                samplers.append({
+                    'slot': getattr(item, 'slot', 0),
+                    'descriptor': item.descriptor,
+                })
+
+        return samplers
+
+
 class PipelineService:
     """Pipeline state service"""
 
@@ -179,7 +371,7 @@ class PipelineService:
         """Get shader resource views (SRVs) for a stage"""
         resources = []
         try:
-            srvs = pipe.GetReadOnlyResources(stage, False)
+            srvs = RenderDocAPICompat.get_shader_resources(pipe, stage, False)
 
             name_map = {}
             if reflection:
@@ -187,24 +379,23 @@ class PipelineService:
                     name_map[res.fixedBindNumber] = res.name
 
             for srv in srvs:
-                if srv.descriptor.resource == rd.ResourceId.Null():
+                if srv['resource_id'] == rd.ResourceId.Null():
                     continue
 
-                slot = srv.access.index
                 res_info = {
-                    "slot": slot,
-                    "name": name_map.get(slot, ""),
-                    "resource_id": str(srv.descriptor.resource),
+                    "slot": srv['slot'],
+                    "name": name_map.get(srv['slot'], ""),
+                    "resource_id": str(srv['resource_id']),
                 }
 
                 res_info.update(
-                    self._get_resource_details(controller, srv.descriptor.resource)
+                    self._get_resource_details(controller, srv['resource_id'])
                 )
 
-                res_info["first_mip"] = srv.descriptor.firstMip
-                res_info["num_mips"] = srv.descriptor.numMips
-                res_info["first_slice"] = srv.descriptor.firstSlice
-                res_info["num_slices"] = srv.descriptor.numSlices
+                res_info["first_mip"] = srv['first_mip']
+                res_info["num_mips"] = srv['num_mips']
+                res_info["first_slice"] = srv['first_slice']
+                res_info["num_slices"] = srv['num_slices']
 
                 resources.append(res_info)
         except Exception as e:
@@ -216,7 +407,7 @@ class PipelineService:
         """Get unordered access views (UAVs) for a stage"""
         uavs = []
         try:
-            uav_list = pipe.GetReadWriteResources(stage, False)
+            uav_list = RenderDocAPICompat.get_shader_uavs(pipe, stage, False)
 
             name_map = {}
             if reflection:
@@ -224,22 +415,22 @@ class PipelineService:
                     name_map[res.fixedBindNumber] = res.name
 
             for uav in uav_list:
-                if uav.descriptor.resource == rd.ResourceId.Null():
+                if uav['resource_id'] == rd.ResourceId.Null():
                     continue
 
-                slot = uav.access.index
+                slot = uav['slot']
                 uav_info = {
                     "slot": slot,
                     "name": name_map.get(slot, ""),
-                    "resource_id": str(uav.descriptor.resource),
+                    "resource_id": str(uav['resource_id']),
                 }
 
                 uav_info.update(
-                    self._get_resource_details(controller, uav.descriptor.resource)
+                    self._get_resource_details(controller, uav['resource_id'])
                 )
 
-                uav_info["first_element"] = uav.descriptor.firstMip
-                uav_info["num_elements"] = uav.descriptor.numMips
+                uav_info["first_element"] = uav['first_element']
+                uav_info["num_elements"] = uav['num_elements']
 
                 uavs.append(uav_info)
         except Exception as e:
@@ -251,7 +442,7 @@ class PipelineService:
         """Get samplers for a stage"""
         samplers = []
         try:
-            sampler_list = pipe.GetSamplers(stage, False)
+            sampler_list = RenderDocAPICompat.get_shader_samplers(pipe, stage)
 
             name_map = {}
             if reflection:
@@ -259,46 +450,48 @@ class PipelineService:
                     name_map[samp.fixedBindNumber] = samp.name
 
             for samp in sampler_list:
-                slot = samp.access.index
+                slot = samp.get('slot', 0)
                 samp_info = {
                     "slot": slot,
                     "name": name_map.get(slot, ""),
                 }
 
-                desc = samp.descriptor
-                try:
-                    samp_info["address_u"] = str(desc.addressU)
-                    samp_info["address_v"] = str(desc.addressV)
-                    samp_info["address_w"] = str(desc.addressW)
-                except AttributeError:
-                    pass
+                # Handle different sampler descriptor types
+                desc = samp.get('descriptor') or samp.get('sampler_descriptor')
+                if desc:
+                    try:
+                        samp_info["address_u"] = str(desc.addressU)
+                        samp_info["address_v"] = str(desc.addressV)
+                        samp_info["address_w"] = str(desc.addressW)
+                    except AttributeError:
+                        pass
 
-                try:
-                    samp_info["filter"] = str(desc.filter)
-                except AttributeError:
-                    pass
+                    try:
+                        samp_info["filter"] = str(desc.filter)
+                    except AttributeError:
+                        pass
 
-                try:
-                    samp_info["max_anisotropy"] = desc.maxAnisotropy
-                except AttributeError:
-                    pass
+                    try:
+                        samp_info["max_anisotropy"] = desc.maxAnisotropy
+                    except AttributeError:
+                        pass
 
-                try:
-                    samp_info["min_lod"] = desc.minLOD
-                    samp_info["max_lod"] = desc.maxLOD
-                    samp_info["mip_lod_bias"] = desc.mipLODBias
-                except AttributeError:
-                    pass
+                    try:
+                        samp_info["min_lod"] = desc.minLOD
+                        samp_info["max_lod"] = desc.maxLOD
+                        samp_info["mip_lod_bias"] = desc.mipLODBias
+                    except AttributeError:
+                        pass
 
-                try:
-                    samp_info["border_color"] = [
-                        desc.borderColor[0],
-                        desc.borderColor[1],
-                        desc.borderColor[2],
-                        desc.borderColor[3],
-                    ]
-                except (AttributeError, TypeError):
-                    pass
+                    try:
+                        samp_info["border_color"] = [
+                            desc.borderColor[0],
+                            desc.borderColor[1],
+                            desc.borderColor[2],
+                            desc.borderColor[3],
+                        ]
+                    except (AttributeError, TypeError):
+                        pass
 
                 try:
                     samp_info["compare_function"] = str(desc.compareFunction)
@@ -354,21 +547,44 @@ class PipelineService:
             }
 
             try:
-                # Use GetConstantBlock (correct API name)
-                bind = pipe.GetConstantBlock(stage, i, 0)
+                # API compatibility: GetConstantBlock (1.43) vs GetConstantBuffer (1.17)
+                bind = None
+                if hasattr(pipe, 'GetConstantBlock'):
+                    bind = pipe.GetConstantBlock(stage, i, 0)
+                elif hasattr(pipe, 'GetConstantBuffer'):
+                    bind = pipe.GetConstantBuffer(stage, i, 0)
 
-                if bind and hasattr(bind, 'descriptor') and bind.descriptor.resource != rd.ResourceId.Null():
-                    variables = controller.GetCBufferVariableContents(
-                        pipe.GetGraphicsPipelineObject(),
-                        reflection.resourceId,
-                        stage,
-                        reflection.entryPoint,
-                        i,
-                        bind.descriptor.resource,
-                        0,  # byteOffset
-                        0,  # byteSize (0 = full buffer)
-                    )
-                    cb_info["variables"] = Serializers.serialize_variables(variables)
+                if bind:
+                    # API compatibility: UsedDescriptor (1.43) vs BoundCBuffer (1.17)
+                    # 1.43: bind.descriptor.resource
+                    # 1.17: bind.resourceId
+                    buffer_resource_id = None
+                    byte_offset = 0
+                    byte_size = 0
+
+                    if hasattr(bind, 'descriptor') and hasattr(bind.descriptor, 'resource'):
+                        # RenderDoc 1.43+ (UsedDescriptor)
+                        buffer_resource_id = bind.descriptor.resource
+                        byte_offset = getattr(bind.descriptor, 'byteOffset', 0)
+                        byte_size = getattr(bind.descriptor, 'byteSize', 0)
+                    elif hasattr(bind, 'resourceId'):
+                        # RenderDoc 1.17 (BoundCBuffer)
+                        buffer_resource_id = bind.resourceId
+                        byte_offset = getattr(bind, 'byteOffset', 0)
+                        byte_size = getattr(bind, 'byteSize', 0)
+
+                    if buffer_resource_id and buffer_resource_id != rd.ResourceId.Null():
+                        variables = controller.GetCBufferVariableContents(
+                            pipe.GetGraphicsPipelineObject(),
+                            reflection.resourceId,
+                            stage,
+                            reflection.entryPoint,
+                            i,
+                            buffer_resource_id,
+                            byte_offset,
+                            byte_size,
+                        )
+                        cb_info["variables"] = Serializers.serialize_variables(variables)
             except Exception as e:
                 cb_info["error"] = str(e)
 
@@ -436,23 +652,48 @@ class PipelineService:
                 }
 
                 try:
-                    # Use GetConstantBlock (correct API name)
-                    bind = pipe.GetConstantBlock(stage_enum, i, 0)
+                    # API compatibility: GetConstantBlock (1.43) vs GetConstantBuffer (1.17)
+                    bind = None
+                    if hasattr(pipe, 'GetConstantBlock'):
+                        bind = pipe.GetConstantBlock(stage_enum, i, 0)
+                    elif hasattr(pipe, 'GetConstantBuffer'):
+                        bind = pipe.GetConstantBuffer(stage_enum, i, 0)
 
-                    if bind and hasattr(bind, 'descriptor') and bind.descriptor.resource != rd.ResourceId.Null():
-                        variables = controller.GetCBufferVariableContents(
-                            pipe.GetGraphicsPipelineObject(),
-                            reflection.resourceId,
-                            stage_enum,
-                            reflection.entryPoint,
-                            i,
-                            bind.descriptor.resource,
-                            bind.descriptor.byteOffset,
-                            bind.descriptor.byteSize,
-                        )
-                        cb_info["variables"] = Serializers.serialize_variables(variables)
+                    if bind:
+                        # API compatibility: UsedDescriptor (1.43) vs BoundCBuffer (1.17)
+                        # 1.43: bind.descriptor.resource
+                        # 1.17: bind.resourceId
+                        buffer_resource_id = None
+                        byte_offset = 0
+                        byte_size = 0
+
+                        if hasattr(bind, 'descriptor') and hasattr(bind.descriptor, 'resource'):
+                            # RenderDoc 1.43+ (UsedDescriptor)
+                            buffer_resource_id = bind.descriptor.resource
+                            byte_offset = getattr(bind.descriptor, 'byteOffset', 0)
+                            byte_size = getattr(bind.descriptor, 'byteSize', 0)
+                        elif hasattr(bind, 'resourceId'):
+                            # RenderDoc 1.17 (BoundCBuffer)
+                            buffer_resource_id = bind.resourceId
+                            byte_offset = getattr(bind, 'byteOffset', 0)
+                            byte_size = getattr(bind, 'byteSize', 0)
+
+                        if buffer_resource_id and buffer_resource_id != rd.ResourceId.Null():
+                            variables = controller.GetCBufferVariableContents(
+                                pipe.GetGraphicsPipelineObject(),
+                                reflection.resourceId,
+                                stage_enum,
+                                reflection.entryPoint,
+                                i,
+                                buffer_resource_id,
+                                byte_offset,
+                                byte_size,
+                            )
+                            cb_info["variables"] = Serializers.serialize_variables(variables)
+                        else:
+                            cb_info["note"] = "Constant buffer not bound"
                     else:
-                        cb_info["note"] = "Constant buffer not bound"
+                        cb_info["note"] = "Constant buffer binding not available"
                 except Exception as e:
                     cb_info["error"] = str(e)
 

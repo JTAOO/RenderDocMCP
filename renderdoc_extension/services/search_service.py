@@ -3,8 +3,39 @@ Reverse lookup search service for RenderDoc.
 """
 
 from ..renderdoc_compat import rd
+from .pipeline_service import RenderDocAPICompat
 
 from ..utils import Parsers, Helpers
+
+
+def _check_resource_match(pipe, stage, target_resource_id, ctx):
+    """
+    Check if a resource is bound at the given stage.
+    Returns (matched, reason) tuple.
+    """
+    # Check SRVs (read-only resources)
+    srvs = RenderDocAPICompat.get_shader_resources(pipe, stage, False)
+    for srv in srvs:
+        if srv['resource_id'] == target_resource_id:
+            res_name = ""
+            try:
+                res_name = ctx.GetResourceName(srv['resource_id'])
+            except Exception:
+                pass
+            return True, ("%s SRV slot %d" % (str(stage), srv['slot']), res_name)
+
+    # Check UAVs (read-write resources)
+    uavs = RenderDocAPICompat.get_shader_uavs(pipe, stage, False)
+    for uav in uavs:
+        if uav['resource_id'] == target_resource_id:
+            res_name = ""
+            try:
+                res_name = ctx.GetResourceName(uav['resource_id'])
+            except Exception:
+                pass
+            return True, ("%s UAV slot %d" % (str(stage), uav['slot']), res_name)
+
+    return False, None
 
 
 class SearchService:
@@ -135,33 +166,33 @@ class SearchService:
             # Check SRVs (read-only resources)
             for stage in stages_to_check:
                 try:
-                    srvs = pipe.GetReadOnlyResources(stage, False)
+                    srvs = RenderDocAPICompat.get_shader_resources(pipe, stage, False)
                     for srv in srvs:
-                        if srv.descriptor.resource == rd.ResourceId.Null():
+                        if srv['resource_id'] == rd.ResourceId.Null():
                             continue
                         res_name = ""
                         try:
-                            res_name = ctx.GetResourceName(srv.descriptor.resource)
+                            res_name = ctx.GetResourceName(srv['resource_id'])
                         except Exception:
                             pass
                         if empty_search or (res_name and texture_name.lower() in res_name.lower()):
-                            return "%s SRV: '%s'" % (str(stage), res_name or str(srv.descriptor.resource))
+                            return "%s SRV: '%s'" % (str(stage), res_name or str(srv['resource_id']))
                 except Exception:
                     pass
 
                 # Check UAVs (read-write resources)
                 try:
-                    uavs = pipe.GetReadWriteResources(stage, False)
+                    uavs = RenderDocAPICompat.get_shader_uavs(pipe, stage, False)
                     for uav in uavs:
-                        if uav.descriptor.resource == rd.ResourceId.Null():
+                        if uav['resource_id'] == rd.ResourceId.Null():
                             continue
                         res_name = ""
                         try:
-                            res_name = ctx.GetResourceName(uav.descriptor.resource)
+                            res_name = ctx.GetResourceName(uav['resource_id'])
                         except Exception:
                             pass
                         if empty_search or (res_name and texture_name.lower() in res_name.lower()):
-                            return "%s UAV: '%s'" % (str(stage), res_name or str(uav.descriptor.resource))
+                            return "%s UAV: '%s'" % (str(stage), res_name or str(uav['resource_id']))
                 except Exception:
                     pass
 
@@ -203,23 +234,11 @@ class SearchService:
                 if shader == target_rid:
                     return "%s shader" % str(stage)
 
-            # Check SRVs and UAVs
+            # Check SRVs and UAVs using compatibility layer
             for stage in stages_to_check:
-                try:
-                    srvs = pipe.GetReadOnlyResources(stage, False)
-                    for srv in srvs:
-                        if srv.descriptor.resource == target_rid:
-                            return "%s SRV slot %d" % (str(stage), srv.access.index)
-                except Exception:
-                    pass
-
-                try:
-                    uavs = pipe.GetReadWriteResources(stage, False)
-                    for uav in uavs:
-                        if uav.descriptor.resource == target_rid:
-                            return "%s UAV slot %d" % (str(stage), uav.access.index)
-                except Exception:
-                    pass
+                matched, result = _check_resource_match(pipe, stage, target_rid, ctx)
+                if matched:
+                    return result[0]
 
             # Check render targets
             try:
