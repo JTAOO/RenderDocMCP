@@ -2,7 +2,7 @@
 Serialization utility functions for RenderDoc data types.
 """
 
-import renderdoc as rd
+from ..renderdoc_compat import rd
 
 
 class Serializers:

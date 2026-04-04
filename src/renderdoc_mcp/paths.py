@@ -21,6 +21,7 @@ def resolve_qrenderdoc_path() -> Path:
         Path(program_files) / "RenderDoc 1.42" / "qrenderdoc.exe",
         Path(program_files) / "RenderDoc 1.41" / "qrenderdoc.exe",
         Path(program_files) / "RenderDoc 1.40" / "qrenderdoc.exe",
+        Path(program_files) / "RenderDoc 1.17" / "qrenderdoc.exe",
     ]
 
     for candidate in candidates:

@@ -24,6 +24,7 @@ class FileIpcBridgeClient:
 
     def __init__(self, timeout: float = 30.0) -> None:
         self.timeout = timeout
+        self._connected = False
 
     def connect(self) -> None:
         """Check if bridge is available."""
@@ -33,14 +34,17 @@ class FileIpcBridgeClient:
                 f"IPC directory not found: {IPC_DIR}. "
                 "Make sure RenderDoc is running with the MCP Bridge extension loaded."
             )
+        self._connected = True
 
     def close(self) -> None:
         """Close connection (no-op for file IPC)."""
-        pass
+        self._connected = False
 
     def call(self, method: str, params: dict[str, Any] | None = None) -> Any:
         """Call a method on the bridge server."""
-        self.connect()
+        # Lazy connect - check connection on first call
+        if not self._connected:
+            self.connect()
 
         request = {
             "id": str(uuid.uuid4()),

@@ -2,7 +2,7 @@
 Capture management service for RenderDoc.
 """
 
-import renderdoc as rd
+from ..renderdoc_compat import rd
 
 
 class CaptureManager:
