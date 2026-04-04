@@ -1,152 +1,176 @@
 # RenderDoc MCP Server
 
-RenderDoc UI拡張機能として動作するMCPサーバー。AIアシスタントがRenderDocのキャプチャデータにアクセスし、グラフィックスデバッグを支援する。
+RenderDoc MCP server with AI-first design for graphics debugging assistance.
 
-## アーキテクチャ
+## Architecture
 
 ```
 Claude/AI Client (stdio)
         │
         ▼
-MCP Server Process (Python + FastMCP 2.0)
-        │ File-based IPC (%TEMP%/renderdoc_mcp/)
+MCP Server Process (Python + mcp>=1.26.0)
+        │ Socket IPC (localhost:19876)
         ▼
 RenderDoc Process (Extension)
 ```
 
-RenderDoc内蔵のPythonにはsocketモジュールがないため、ファイルベースのIPCで通信を行う。
+## Setup
 
-## セットアップ
-
-### 1. RenderDoc拡張機能のインストール
+### 1. Install RenderDoc Extension
 
 ```bash
-python scripts/install_extension.py
+cd D:\CodeProjects\RenderDocMCP
+uv run renderdoc-install-extension
 ```
 
-拡張機能は `%APPDATA%\qrenderdoc\extensions\renderdoc_mcp_bridge` にインストールされる。
+The extension will be installed to `%APPDATA%\qrenderdoc\extensions\renderdoc_mcp_bridge`.
 
-### 2. RenderDocで拡張機能を有効化
+### 2. Enable Extension in RenderDoc
 
-1. RenderDocを起動
-2. Tools > Manage Extensions
-3. "RenderDoc MCP Bridge" を有効化
+1. Start RenderDoc
+2. Go to **Tools > Manage Extensions**
+3. Enable **"RenderDoc MCP Bridge"**
 
-### 3. MCPサーバーのインストール
+### 3. Install MCP Server
 
 ```bash
 uv tool install
-uv tool update-shell  # PATHに追加
+uv tool update-shell
 ```
 
-シェルを再起動すると `renderdoc-mcp` コマンドが使えるようになる。
-
-> **Note**: `--editable` を付けると、ソースコードの変更が即座に反映される（開発時に便利）。
-> 安定版としてインストールする場合は `uv tool install .` を使用。
-
-### 4. MCPクライアントの設定
-
-#### Claude Desktop
-
-`claude_desktop_config.json` に追加:
-
-```json
-{
-  "mcpServers": {
-    "renderdoc": {
-      "command": "renderdoc-mcp"
-    }
-  }
-}
-```
+### 4. Configure MCP Client
 
 #### Claude Code
 
-`.mcp.json` に追加:
+Update `.mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "renderdoc": {
-      "command": "renderdoc-mcp"
+      "command": "uv",
+      "args": ["run", "renderdoc-mcp"],
+      "cwd": "D:\\CodeProjects\\RenderDocMCP"
     }
   }
 }
 ```
 
-## 使い方
+## Quick Start
 
-1. RenderDocを起動し、キャプチャファイル (.rdc) を開く
-2. MCPクライアント (Claude等) から RenderDoc のデータにアクセス
+### Open a Capture
 
-## MCPツール一覧
-
-| ツール | 説明 |
-|--------|------|
-| `get_capture_status` | キャプチャの読み込み状態を確認 |
-| `get_draw_calls` | ドローコール一覧を階層構造で取得 |
-| `get_draw_call_details` | 特定のドローコールの詳細情報を取得 |
-| `get_shader_info` | シェーダーのソースコード・定数バッファの値を取得 |
-| `get_buffer_contents` | バッファの内容を取得 (Base64) |
-| `get_texture_info` | テクスチャのメタデータを取得 |
-| `get_texture_data` | テクスチャのピクセルデータを取得 (Base64) |
-| `get_pipeline_state` | パイプライン状態を取得 |
-
-## 使用例
-
-### ドローコール一覧の取得
-
-```
-get_draw_calls(include_children=true)
+```python
+renderdoc_open_capture(capture_path="E:\\path\\to\\capture.rdc")
+# Returns: {"capture_id": "capture_xxx", "capture_path": "...", "success": true, ...}
 ```
 
-### シェーダー情報の取得
+### Get Capture Overview
 
-```
-get_shader_info(event_id=123, stage="pixel")
-```
-
-### パイプライン状態の取得
-
-```
-get_pipeline_state(event_id=123)
+```python
+renderdoc_get_capture_overview(capture_id="capture_xxx")
 ```
 
-### テクスチャデータの取得
+### List Draw Calls with Pagination
 
-```
-# 2Dテクスチャのmip 0を取得
-get_texture_data(resource_id="ResourceId::123")
-
-# 特定のmipレベルを取得
-get_texture_data(resource_id="ResourceId::123", mip=2)
-
-# キューブマップの特定の面を取得 (0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-)
-get_texture_data(resource_id="ResourceId::456", slice=3)
-
-# 3Dテクスチャの特定の深度スライスを取得
-get_texture_data(resource_id="ResourceId::789", depth_slice=5)
+```python
+renderdoc_list_draw_calls(
+    capture_id="capture_xxx",
+    limit=50,
+    cursor=0,
+    only_actions=True,
+    flags_filter=["Drawcall"]
+)
+# Returns: {"items": [...], "total": 1000, "cursor": 0, "has_more": true, "next_cursor": 50}
 ```
 
-### バッファデータの部分取得
+### Get Draw Call Details
 
+```python
+renderdoc_get_draw_call_details(
+    capture_id="capture_xxx",
+    event_id=1234
+)
 ```
-# バッファ全体を取得
-get_buffer_contents(resource_id="ResourceId::123")
 
-# オフセット256から512バイト取得
-get_buffer_contents(resource_id="ResourceId::123", offset=256, length=512)
+### Get Shader Info
+
+```python
+renderdoc_get_shader_info(
+    capture_id="capture_xxx",
+    event_id=1234,
+    stage="pixel"
+)
 ```
 
-## 要件
+### Get Pipeline State
+
+```python
+renderdoc_get_pipeline_state(
+    capture_id="capture_xxx",
+    event_id=1234
+)
+```
+
+### Find Draw Calls by Shader/Texture
+
+```python
+renderdoc_find_draws_by_shader(
+    capture_id="capture_xxx",
+    shader_name="ToonShader",
+    stage="pixel"
+)
+
+renderdoc_find_draws_by_texture(
+    capture_id="capture_xxx",
+    texture_name="CharacterSkin"
+)
+
+renderdoc_find_draws_by_resource(
+    capture_id="capture_xxx",
+    resource_id="ResourceId::12345"
+)
+```
+
+### Get Buffer/Texture Data
+
+```python
+renderdoc_get_buffer_contents(
+    capture_id="capture_xxx",
+    resource_id="ResourceId::456",
+    offset=0,
+    length=256
+)
+
+renderdoc_get_texture_data(
+    capture_id="capture_xxx",
+    resource_id="ResourceId::789",
+    mip=0,
+    slice=0
+)
+```
+
+## AI-First Design Principles
+
+1. **ID-based Navigation**: All tools use `capture_id` and `event_id` for navigation
+2. **Pagination**: List tools support `cursor` and `limit` parameters
+3. **Compact Responses**: Default responses are small; use detail tools for more info
+4. **No Duplicate Arrays**: Data is returned once, referenced by ID thereafter
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RENDERDOC_BACKEND` | `qrenderdoc` | Backend to use (`qrenderdoc` or `native_python`) |
+| `RENDERDOC_QRENDERDOC_PATH` | Auto-detect | Override qrenderdoc.exe path |
+| `RENDERDOC_BRIDGE_TIMEOUT_SECONDS` | 30 | Handshake timeout |
+
+## Requirements
 
 - Python 3.10+
-- [uv](https://docs.astral.sh/uv/)
 - RenderDoc 1.20+
+- Windows (for socket IPC)
 
-> **Note**: 動作確認はWindows + DirectX 11環境でのみ行っています。
-> Linux/macOS + Vulkan/OpenGL環境でも動作する可能性がありますが、未検証です。
-
-## ライセンス
+## License
 
 MIT

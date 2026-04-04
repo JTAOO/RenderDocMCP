@@ -1,1 +1,0 @@
-"""RenderDoc MCP Server"""

@@ -1,7 +1,6 @@
-"""
-RenderDoc Bridge Client
-Communicates with the RenderDoc extension via file-based IPC.
-"""
+"""File-based IPC bridge client for RenderDoc communication."""
+
+from __future__ import annotations
 
 import json
 import os
@@ -9,6 +8,8 @@ import tempfile
 import time
 import uuid
 from typing import Any
+
+from renderdoc_mcp.errors import BridgeDisconnectedError, BridgeHandshakeTimeoutError
 
 
 # IPC directory (must match renderdoc_extension/socket_server.py)
@@ -18,29 +19,28 @@ RESPONSE_FILE = os.path.join(IPC_DIR, "response.json")
 LOCK_FILE = os.path.join(IPC_DIR, "lock")
 
 
-class RenderDocBridgeError(Exception):
-    """Error communicating with RenderDoc bridge"""
+class FileIpcBridgeClient:
+    """File-based IPC bridge client."""
 
-    pass
+    def __init__(self, timeout: float = 30.0) -> None:
+        self.timeout = timeout
 
-
-class RenderDocBridge:
-    """Client for communicating with RenderDoc extension via file-based IPC"""
-
-    def __init__(self, host: str = "127.0.0.1", port: int = 19876):
-        # host/port are kept for API compatibility but not used
-        self.host = host
-        self.port = port
-        self.timeout = 30.0  # seconds
-
-    def call(self, method: str, params: dict[str, Any] | None = None) -> Any:
-        """Call a method on the RenderDoc extension"""
-        # Check if IPC directory exists
+    def connect(self) -> None:
+        """Check if bridge is available."""
         if not os.path.exists(IPC_DIR):
-            raise RenderDocBridgeError(
-                f"Cannot connect to RenderDoc MCP Bridge at {self.host}:{self.port}. "
+            raise BridgeHandshakeTimeoutError(
+                f"Cannot connect to RenderDoc MCP Bridge. "
+                f"IPC directory not found: {IPC_DIR}. "
                 "Make sure RenderDoc is running with the MCP Bridge extension loaded."
             )
+
+    def close(self) -> None:
+        """Close connection (no-op for file IPC)."""
+        pass
+
+    def call(self, method: str, params: dict[str, Any] | None = None) -> Any:
+        """Call a method on the bridge server."""
+        self.connect()
 
         request = {
             "id": str(uuid.uuid4()),
@@ -59,7 +59,7 @@ class RenderDocBridge:
 
             # Write request
             with open(REQUEST_FILE, "w", encoding="utf-8") as f:
-                json.dump(request, f)
+                json.dump(request, f, ensure_ascii=False)
 
             # Remove lock file to signal write complete
             os.remove(LOCK_FILE)
@@ -80,18 +80,21 @@ class RenderDocBridge:
 
                     if "error" in response:
                         error = response["error"]
-                        raise RenderDocBridgeError(f"[{error['code']}] {error['message']}")
+                        raise Exception(f"[{error.get('code', -1)}] {error.get('message', 'Unknown error')}")
 
                     return response.get("result")
 
                 # Check timeout
                 if time.time() - start_time > self.timeout:
-                    raise RenderDocBridgeError("Request timed out")
+                    raise BridgeHandshakeTimeoutError(
+                        f"Request timed out after {self.timeout}s. "
+                        "Make sure RenderDoc is running with the MCP Bridge extension loaded."
+                    )
 
                 # Poll interval
                 time.sleep(0.05)
 
-        except RenderDocBridgeError:
+        except (BridgeDisconnectedError, BridgeHandshakeTimeoutError):
             raise
         except Exception as e:
-            raise RenderDocBridgeError(f"Communication error: {e}")
+            raise BridgeDisconnectedError(f"Communication error: {e}")

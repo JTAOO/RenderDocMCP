@@ -1,24 +1,38 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "renderdoc-mcp"
-version = "1.0.0"
-description = "MCP server for RenderDoc graphics debugging"
+version = "2.0.0"
+description = "A Windows-first MCP server for inspecting RenderDoc captures with AI-first design."
 readme = "README.md"
 requires-python = ">=3.10"
+license = { file = "LICENSE" }
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+]
 dependencies = [
-    "fastmcp>=2.0.0,<3.0.0",
-    "pydantic>=2.0.0",
+  "mcp>=1.26.0,<2.0.0",
+  "pydantic>=2.0.0",
 ]
 
 [project.scripts]
-renderdoc-mcp = "mcp_server.server:main"
+renderdoc-mcp = "renderdoc_mcp.__main__:main"
+renderdoc-install-extension = "renderdoc_mcp.install_cli:main"
 
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
 
-[tool.hatch.build.targets.wheel]
-packages = ["mcp_server"]
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+renderdoc_mcp = [
+  "qrenderdoc_extension/renderdoc_mcp_bridge/__init__.py",
+  "qrenderdoc_extension/renderdoc_mcp_bridge/extension.json",
+]
 
 [tool.uv]
 package = true
-dev-dependencies = []

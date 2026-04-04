@@ -93,21 +93,27 @@ class RequestHandler:
         if shader_name is None:
             raise ValueError("shader_name is required")
         stage = params.get("stage")
-        return self.facade.find_draws_by_shader(shader_name, stage)
+        offset = params.get("offset", 0)
+        max_scans = params.get("max_scans", 500)
+        return self.facade.find_draws_by_shader(shader_name, stage, offset, max_scans)
 
     def _handle_find_draws_by_texture(self, params):
         """Handle find_draws_by_texture request"""
         texture_name = params.get("texture_name")
         if texture_name is None:
             raise ValueError("texture_name is required")
-        return self.facade.find_draws_by_texture(texture_name)
+        offset = params.get("offset", 0)
+        max_scans = params.get("max_scans", 500)
+        return self.facade.find_draws_by_texture(texture_name, offset, max_scans)
 
     def _handle_find_draws_by_resource(self, params):
         """Handle find_draws_by_resource request"""
         resource_id = params.get("resource_id")
         if resource_id is None:
             raise ValueError("resource_id is required")
-        return self.facade.find_draws_by_resource(resource_id)
+        offset = params.get("offset", 0)
+        max_scans = params.get("max_scans", 500)
+        return self.facade.find_draws_by_resource(resource_id, offset, max_scans)
 
     def _handle_get_draw_call_details(self, params):
         """Handle get_draw_call_details request"""

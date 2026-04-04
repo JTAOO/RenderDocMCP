@@ -1,7 +1,9 @@
 {
   "mcpServers": {
     "renderdoc": {
-      "command": "renderdoc-mcp"
+      "command": "uv",
+      "args": ["run", "renderdoc-mcp"],
+      "cwd": "D:\\CodeProjects\\RenderDocMCP"
     }
   }
 }

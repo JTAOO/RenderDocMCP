@@ -100,17 +100,17 @@ class RenderDocFacade:
 
     # ==================== Search Operations ====================
 
-    def find_draws_by_shader(self, shader_name, stage=None):
+    def find_draws_by_shader(self, shader_name, stage=None, offset=0, max_scans=500):
         """Find all draw calls using a shader with the given name (partial match)"""
-        return self._search.find_draws_by_shader(shader_name, stage)
+        return self._search.find_draws_by_shader(shader_name, stage, offset, max_scans)
 
-    def find_draws_by_texture(self, texture_name):
+    def find_draws_by_texture(self, texture_name, offset=0, max_scans=500):
         """Find all draw calls using a texture with the given name (partial match)"""
-        return self._search.find_draws_by_texture(texture_name)
+        return self._search.find_draws_by_texture(texture_name, offset, max_scans)
 
-    def find_draws_by_resource(self, resource_id):
+    def find_draws_by_resource(self, resource_id, offset=0, max_scans=500):
         """Find all draw calls using a specific resource ID (exact match)"""
-        return self._search.find_draws_by_resource(resource_id)
+        return self._search.find_draws_by_resource(resource_id, offset, max_scans)
 
     # ==================== Resource Operations ====================
 

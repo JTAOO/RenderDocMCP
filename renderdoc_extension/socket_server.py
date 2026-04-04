@@ -1,14 +1,16 @@
-"""
-File-based IPC Server for RenderDoc MCP Bridge
+"""File-based IPC Server for RenderDoc MCP Bridge.
 Uses file polling since RenderDoc's Python doesn't have socket/QtNetwork modules.
 """
 
 import json
 import os
-import traceback
 import tempfile
+import traceback
 
-from PySide2.QtCore import QObject, QTimer
+try:
+    from PySide2.QtCore import QObject, QTimer
+except ImportError:
+    from PySide.QtCore import QObject, QTimer
 
 
 # IPC directory

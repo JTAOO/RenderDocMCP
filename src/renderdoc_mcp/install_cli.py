@@ -1,7 +1,4 @@
-"""
-RenderDoc Extension Installer
-Copies the extension to RenderDoc's extension directory.
-"""
+"""RenderDoc MCP Extension Installer CLI."""
 
 import os
 import shutil
@@ -9,8 +6,8 @@ import sys
 from pathlib import Path
 
 
-def get_extension_dir():
-    """Get RenderDoc extension directory"""
+def get_extension_dir() -> Path:
+    """Get RenderDoc extension directory."""
     if sys.platform == "win32":
         appdata = os.environ.get("APPDATA")
         if appdata:
@@ -18,19 +15,18 @@ def get_extension_dir():
     else:
         home = Path.home()
         return home / ".local" / "share" / "qrenderdoc" / "extensions"
-
     raise RuntimeError("Cannot determine RenderDoc extension directory")
 
 
-def install():
-    """Install the extension"""
+def install() -> None:
+    """Install the extension."""
     # Source directory
     script_dir = Path(__file__).parent
-    project_root = script_dir.parent
+    project_root = script_dir.parent.parent
     extension_src = project_root / "renderdoc_extension"
 
     if not extension_src.exists():
-        print("Error: Extension source not found at %s" % extension_src)
+        print(f"Error: Extension source not found at {extension_src}")
         sys.exit(1)
 
     # Destination directory
@@ -41,7 +37,7 @@ def install():
 
     # Remove existing installation
     if dest.exists():
-        print("Removing existing installation at %s" % dest)
+        print(f"Removing existing installation at {dest}")
         shutil.rmtree(dest)
 
     # Copy extension (excluding __pycache__)
@@ -50,27 +46,32 @@ def install():
         dest,
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
     )
-    print("Extension installed to %s" % dest)
+    print(f"Extension installed to {dest}")
     print("  (__pycache__ directories excluded)")
     print("")
     print("Please restart RenderDoc and enable the extension in:")
     print("  Tools > Manage Extensions > RenderDoc MCP Bridge")
 
 
-def uninstall():
-    """Uninstall the extension"""
+def uninstall() -> None:
+    """Uninstall the extension."""
     ext_dir = get_extension_dir()
     dest = ext_dir / "renderdoc_mcp_bridge"
 
     if dest.exists():
         shutil.rmtree(dest)
-        print("Extension uninstalled from %s" % dest)
+        print(f"Extension uninstalled from {dest}")
     else:
-        print("Extension not found at %s" % dest)
+        print(f"Extension not found at {dest}")
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Main entry point."""
     if len(sys.argv) > 1 and sys.argv[1] == "uninstall":
         uninstall()
     else:
         install()
+
+
+if __name__ == "__main__":
+    main()
